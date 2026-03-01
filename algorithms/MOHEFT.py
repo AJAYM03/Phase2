@@ -24,16 +24,14 @@ class MOHEFT:
     # ==========================================================
     def run(self):
 
-        # 🔴 Fetch CURRENT dynamic tasks (critical)
+        # 🔴 DYNAMIC SYNCHRONIZATION
         self.all_tasks = get_all_tasks(self.data)
         self.num_tasks = len(self.all_tasks)
 
-        # ======================================================
-        # 🛑 SAFE CASE: No tasks in this window
-        # ======================================================
+        # 🛑 ZERO-TASK TRAP
         if self.num_tasks == 0:
             dummy = Individual()
-            dummy.CInd = [0] * self.num_resources  # minimal safe chromosome
+            dummy.CInd = []
             pop = self.fitness([dummy], self.data)
             return pop[0], pop
 

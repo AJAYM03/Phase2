@@ -15,6 +15,17 @@ class OC:
         self.num_resources = len(self.servers)
 
     def run(self):
+        # 🔴 DYNAMIC SYNCHRONIZATION
+        self.all_tasks = get_all_tasks(self.data)
+        self.num_tasks = len(self.all_tasks)
+
+        # 🛑 ZERO-TASK TRAP
+        if self.num_tasks == 0:
+            dummy = Individual()
+            dummy.CInd = []
+            pop = self.fitness([dummy], self.data)
+            return pop[0], pop
+
         individual = Individual()
         individual.CInd = []
         

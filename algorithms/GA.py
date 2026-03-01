@@ -95,6 +95,18 @@ class GA:
         return individual
 
     def run(self):
+        # 🔴 DYNAMIC SYNCHRONIZATION
+        self.all_tasks = get_all_tasks(self.data)
+        self.num_tasks = len(self.all_tasks)
+        self.gene_size = self.num_tasks * self.num_resources
+
+        # 🛑 ZERO-TASK TRAP
+        if self.num_tasks == 0:
+            dummy = Individual()
+            dummy.CInd = []
+            pop = self.fitness([dummy], self.data)
+            return pop[0], pop
+
         # 1. Initialize Randomly
         population = self.initialize_population()
         population = self.fitness(population, self.data)

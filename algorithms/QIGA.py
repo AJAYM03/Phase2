@@ -13,7 +13,11 @@ class QIGA:
         # Robust Task Counting
         self.all_tasks = get_all_tasks(data)
         self.num_tasks = len(self.all_tasks)
-        self.num_resources = self.data['EdgeServer'].count()
+        
+        # FIX: Freeze and Sort servers to match config.py logic exactly
+        self.servers = list(self.data['EdgeServer'].all())
+        self.servers.sort(key=lambda s: s.id)
+        self.num_resources = len(self.servers)
         
         # Quantum Parameters (Adaptive - Matching HybridQIGA for Fairness)
         self.initial_theta = 0.05 * np.pi
@@ -21,75 +25,20 @@ class QIGA:
         self.theta = self.initial_theta 
         self.mutation_rate = 0.01 
         
-        # Cache for seeding
-        self.servers = self.data['EdgeServer'].all()
+        # Cache for potential future logic, though seeding is removed
         self.server_costs = [s.power_model_parameters.get('monetary_cost', 0) for s in self.servers]
 
-    # --- NSGA-II Helpers ---
-    def dominates(self, fitness1, fitness2):
-        return all(f1 <= f2 for f1, f2 in zip(fitness1, fitness2)) and any(f1 < f2 for f1, f2 in zip(fitness1, fitness2))
-
-    def non_dominated_sorting(self, population):
-        fronts = [[]]
-        for p in population:
-            p.domination_count = 0
-            p.dominated_set = []
-            for q in population:
-                if self.dominates(p.fitness, q.fitness):
-                    p.dominated_set.append(q)
-                elif self.dominates(q.fitness, p.fitness):
-                    p.domination_count += 1
-            if p.domination_count == 0:
-                p.rank = 0
-                fronts[0].append(p)
-        
-        i = 0
-        while len(fronts[i]) > 0:
-            next_front = []
-            for p in fronts[i]:
-                for q in p.dominated_set:
-                    q.domination_count -= 1
-                    if q.domination_count == 0:
-                        q.rank = i + 1
-                        next_front.append(q)
-            i += 1
-            fronts.append(next_front)
-        if not fronts[-1]: fronts.pop()
-        return fronts
-
-    def calculate_crowding_distance(self, front):
-        if not front: return
-        num_objs = len(front[0].fitness)
-        for p in front: p.crowding_distance = 0
-        for m in range(num_objs):
-            front.sort(key=lambda x: x.fitness[m])
-            front[0].crowding_distance = float('inf')
-            front[-1].crowding_distance = float('inf')
-            min_v, max_v = front[0].fitness[m], front[-1].fitness[m]
-            if max_v == min_v: continue
-            norm = max_v - min_v
-            for i in range(1, len(front)-1):
-                front[i].crowding_distance += (front[i+1].fitness[m] - front[i-1].fitness[m]) / norm
-
-    # --- Seeding ---
-    def _generate_heuristic_seed(self):
-        """Creates a single solution optimized purely for COST."""
-        ind = Individual()
-        ind.CInd = []
-        cheapest_idx = self.server_costs.index(min(self.server_costs))
-        
-        for _ in range(self.num_tasks):
-            gene = [0] * self.num_resources
-            gene[cheapest_idx] = 1
-            ind.CInd.extend(gene)
-        return ind
+    # --- Helper: Weighted Score (Unifying the Evaluation) ---
+    def get_score(self, ind):
+        if not ind.fitness or ind.fitness[0] == float('inf'): return float('inf')
+        return sum(ind.fitness)
 
     # --- Quantum Operations ---
-
     def _initialize_population(self):
         num_qubits = self.num_tasks * self.num_resources
         q_ind = []
         for _ in range(num_qubits):
+            # True Standard QIGA: Start in pure superposition (equal probability for all states)
             q_ind.append(np.array([[1/np.sqrt(2)], [1/np.sqrt(2)]]))
         return q_ind
 
@@ -123,7 +72,7 @@ class QIGA:
     def _update_quantum_gates(self, q_ind, best_solution, current_gen):
         if best_solution is None: return q_ind
 
-        # Adaptive Decay: Linearly decrease rotation angle (SAME AS HYBRIDQIGA)
+        # Adaptive Decay: Linearly decrease rotation angle
         decay_factor = 1 - (current_gen / self.generation_count)
         self.theta = self.min_theta + (self.initial_theta - self.min_theta) * decay_factor
 
@@ -168,38 +117,52 @@ class QIGA:
         return q_ind
 
     def run(self):
+        # 🔴 DYNAMIC SYNCHRONIZATION
+        self.all_tasks = get_all_tasks(self.data)
+        self.num_tasks = len(self.all_tasks)
+
+        # 🛑 ZERO-TASK TRAP
+        if self.num_tasks == 0:
+            dummy = Individual()
+            dummy.CInd = []
+            pop = self.fitness([dummy], self.data)
+            return pop[0], pop
+
         q_ind = self._initialize_population()
         
-        # --- SEEDING ---
-        seed_ind = self._generate_heuristic_seed()
-        seeded_pop = self.fitness([seed_ind], self.data)
-        best_overall = copy.deepcopy(seeded_pop[0])
-        # ---------------
-
+        # --- PURE QIGA: No Seeding ---
+        best_overall = None
         classical_pop = []
         
         for gen in range(self.generation_count):
+            # 1. Measure the quantum states
             classical_pop = self._measure(q_ind)
+            
+            # 2. Evaluate fitness
             classical_pop = self.fitness(classical_pop, self.data)
             
-            fronts = self.non_dominated_sorting(classical_pop)
-            self.calculate_crowding_distance(fronts[0])
-            fronts[0].sort(key=lambda x: x.crowding_distance, reverse=True)
-            best_current = fronts[0][0]
+            # 3. FAIR SCORING: Sort by simple weighted score
+            classical_pop.sort(key=self.get_score)
+            best_current = classical_pop[0]
             
+            # 4. Update Global Best (Handling None state for the first generation)
             if best_overall is None:
                 best_overall = copy.deepcopy(best_current)
-            elif self.dominates(best_current.fitness, best_overall.fitness):
-                best_overall = copy.deepcopy(best_current)
-            elif not self.dominates(best_overall.fitness, best_current.fitness):
-                if random.random() < 0.3:
-                    best_overall = copy.deepcopy(best_current)
+            else:
+                current_score = self.get_score(best_current)
+                overall_score = self.get_score(best_overall)
 
-            # Pass 'gen' for adaptive theta
+                if current_score < overall_score:
+                    best_overall = copy.deepcopy(best_current)
+                elif current_score == overall_score:
+                    if random.random() < 0.3:
+                        best_overall = copy.deepcopy(best_current)
+
+            # 5. Update Quantum Gates based on the FAIR best_overall
             q_ind = self._update_quantum_gates(q_ind, best_overall, gen)
 
         if best_overall:
             if best_overall not in classical_pop:
-                classical_pop.append(best_overall)
+                classical_pop.insert(0, best_overall)
         
         return best_overall, classical_pop

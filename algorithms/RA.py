@@ -33,6 +33,17 @@ class RA:
         return individual
 
     def run(self):
+        # 🔴 DYNAMIC SYNCHRONIZATION
+        self.all_tasks = get_all_tasks(self.data)
+        self.num_tasks = len(self.all_tasks)
+
+        # 🛑 ZERO-TASK TRAP
+        if self.num_tasks == 0:
+            dummy = Individual()
+            dummy.CInd = []
+            pop = self.fitness([dummy], self.data)
+            return pop[0], pop
+
         # Generate 'population_size' random solutions and pick the best one
         # This gives RA a fair chance to find something decent
         population = [self.schedule() for _ in range(self.population_size)]

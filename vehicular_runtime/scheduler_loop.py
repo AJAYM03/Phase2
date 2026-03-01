@@ -2,16 +2,33 @@ import os
 import csv
 import copy
 from config import *
-from algorithms import SHybridQIGA, MOHEFT
+
+# 1️⃣ IMPORT ALL ALGORITHMS
+from algorithms import (
+    SHybridQIGA, MOHEFT, GA, PSO, DE, 
+    QIGA, OE, OC, RA, RR
+)
 from .mobility_manager import MobilityManager
 from .task_generator import VehicularTaskGenerator
 
 SCHEDULING_INTERVAL = 15
 SIMULATION_DURATION = 120
 
+# 2️⃣ EXPAND ALGORITHM DICTIONARY
 ALGORITHMS = {
     "SHybridQIGA": SHybridQIGA.SHybridQIGA,
-    "MOHEFT": MOHEFT.MOHEFT
+    "MOHEFT": MOHEFT.MOHEFT,
+    "GA": GA.GA,
+    "PSO": PSO.PSO,
+    "DE": DE.DE,
+    "QIGA": QIGA.QIGA,
+    "RR": RR.RR,
+    "RA": RA.RA,
+    "OE": OE.OE,
+    "OC": OC.OC,
+    # If you also fixed these two, uncomment them:
+    # "SQIGA": SQIGA.SQIGA,
+    # "HybridQIGA": HybridQIGA.HybridQIGA
 }
 
 class DynamicSchedulerLoop:
@@ -118,7 +135,7 @@ class DynamicSchedulerLoop:
         current_time=0
         tasks_window=0
 
-        while current_time<SIMULATION_DURATION:
+        while current_time < SIMULATION_DURATION:
 
             if not mobility.sumo.started:
                 break
@@ -133,7 +150,7 @@ class DynamicSchedulerLoop:
             # ==================================================
             # ⚙️ SCHEDULER TRIGGER
             # ==================================================
-            if current_time%SCHEDULING_INTERVAL==0 and current_time!=0:
+            if current_time % SCHEDULING_INTERVAL == 0 and current_time != 0:
 
                 print("\n"+"="*70)
                 print(f"⚙️  SCHEDULER TRIGGER @ t={current_time}s")
@@ -149,15 +166,21 @@ class DynamicSchedulerLoop:
                 task_snapshot=self._snapshot_tasks(users)
 
                 # 🔁 RUN ALL ALGORITHMS ON SAME TASKS
-                for algo_name,AlgoClass in ALGORITHMS.items():
+                for algo_name, AlgoClass in ALGORITHMS.items():
 
                     print(f"\n🔬 Running {algo_name}...")
 
                     # Restore identical tasks
                     self._restore_tasks(users,task_snapshot)
 
-                    alg=AlgoClass(fitness,K_POP_SIZE,K_GEN_SIZE,self.data)
-                    best_solution,_=alg.run()
+                    # 3️⃣ FIX: Handle specific argument requirements
+                    if algo_name == "OC":
+                        # Only Cloud takes no population/gen arguments
+                        alg = AlgoClass(fitness, self.data)
+                    else:
+                        alg = AlgoClass(fitness, K_POP_SIZE, K_GEN_SIZE, self.data)
+                    
+                    best_solution, _ = alg.run()
 
                     print(f"{algo_name} → Lat={best_solution.latency:.3f} "
                           f"Energy={best_solution.energy:.3f} "
@@ -167,7 +190,7 @@ class DynamicSchedulerLoop:
                     # Save CSV row per algorithm
                     self._log_row(algo_name,current_time,vehicles,tasks_window,best_solution)
 
-                # 🔄 CLEAR TASKS AFTER ALL ALGOS
+                # 🔄 CLEAR TASKS AFTER ALL ALGOS HAVE RUN
                 for u in users:
                     u.applications.clear()
 

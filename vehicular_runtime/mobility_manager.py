@@ -14,19 +14,25 @@ class MobilityManager:
         # ⭐ CRITICAL FIX: SCALE INFRASTRUCTURE TO METERS
         # =====================================================
         print("🗺️ Scaling BaseStation coordinates to real-world meters...")
+        max_bs_x = 0
+        max_bs_y = 0
+        
         for bs in self.base_stations:
             x, y = bs.coordinates
             bs.coordinates = (x * INFRASTRUCTURE_SCALE, y * INFRASTRUCTURE_SCALE)
+            
+            # Find the edges of our infrastructure grid
+            max_bs_x = max(max_bs_x, bs.coordinates[0])
+            max_bs_y = max(max_bs_y, bs.coordinates[1])
 
-        # 🚗 Start SUMO
-        self.sumo = SUMOInterface(use_gui=use_gui)
+        # 🚗 Start SUMO and pass the infrastructure boundaries
+        self.sumo = SUMOInterface(use_gui=use_gui, bs_bounds=(max_bs_x, max_bs_y))
         self.sumo.start()
 
         # spawn first vehicles
         self.sumo.step()
         self.sumo.update_vehicle_mapping()
         self.sumo.update_user_positions()
-
     # ----------------------------------------------------
     # Distance helper (meters now)
     # ----------------------------------------------------

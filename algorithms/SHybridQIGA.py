@@ -10,32 +10,27 @@ class SHybridQIGA:
         self.generation_count = generation_count
         self.data = data
         
-        # 1. Freeze Data (MUST match config.py logic exactly)
         self.all_tasks = get_all_tasks(data)
         self.num_tasks = len(self.all_tasks)
         
-        # FIX 1: Freeze AND Sort Server List (Determinism)
         self.servers = list(self.data['EdgeServer'].all()) 
         self.servers.sort(key=lambda s: s.id)
         self.num_resources = len(self.servers)
         
-        # Quantum Parameters
         self.initial_theta = 0.05 * np.pi
         self.min_theta = 0.01 * np.pi
         self.theta = self.initial_theta 
-        
-        # Dynamic Mutation
         self.base_mutation_rate = 0.01
         self.mutation_rate = self.base_mutation_rate
         
-        # Cache Static Data
         self.server_freqs = [get_freq(s.model_name, s) for s in self.servers]
         self.server_costs = [s.power_model_parameters.get('monetary_cost', 0) for s in self.servers]
+        # ⭐ NEW: Algorithm now knows how many cores each server has!
+        self.server_cores = [getattr(s, 'cpu', 1) for s in self.servers]
             
         self.task_weights = [t['service'].weight for t in self.all_tasks]
         self.avg_task_weight = sum(self.task_weights) / len(self.task_weights) if self.task_weights else 0
 
-    # --- Quantum Operations ---
     def _initialize_population(self):
         num_qubits = self.num_tasks * self.num_resources
         q_ind = []
@@ -101,16 +96,11 @@ class SHybridQIGA:
         return q_ind
 
     def _generate_heuristic_seed(self):
-        """Cost-optimized seed, safe distribution."""
         ind = Individual()
         ind.CInd = []
-        
         sorted_indices = np.argsort(self.server_costs)
-        
-        # FIX 2: Poison Seed Fix (Use 50% of servers)
         top_k = max(3, self.num_resources // 2)
         best_servers = sorted_indices[:top_k]
-        
         for i in range(self.num_tasks):
             target_idx = best_servers[i % top_k]
             gene = [0] * self.num_resources
@@ -118,17 +108,25 @@ class SHybridQIGA:
             ind.CInd.extend(gene)
         return ind
 
-    # --- SMART REPAIR MECHANISM ---
     def repair_population(self, population):
         graph = self.data.get('graph', {})
         
         for ind in population:
+            server_loads = {i: 0 for i in range(self.num_resources)}
+            for i in range(self.num_tasks):
+                start = i * self.num_resources
+                gene = ind.CInd[start:start + self.num_resources]
+                try:
+                    s_idx = gene.index(1)
+                    server_loads[s_idx] += 1
+                except ValueError:
+                    pass
+
             resources_map = decode(self.data, ind)
             
             for resource, task_dicts in resources_map.items():
                 if not task_dicts: continue
                 
-                # Safe ID Lookup
                 r_idx = -1
                 for idx, s in enumerate(self.servers):
                     if s.id == resource.id: 
@@ -137,6 +135,7 @@ class SHybridQIGA:
                 if r_idx == -1: continue
                 
                 av_freq = self.server_freqs[r_idx]
+                c_cores = self.server_cores[r_idx]
                 r_bs_id = resource.base_station.id
                 
                 for t_dict in task_dicts:
@@ -144,7 +143,6 @@ class SHybridQIGA:
                     t_user = t_dict['user']
                     u_bs_id = t_user.base_station.id
                     
-                    # Safe Task Lookup
                     task_index = -1
                     for i, item in enumerate(self.all_tasks):
                         if item['service'] == t_service:
@@ -152,53 +150,67 @@ class SHybridQIGA:
                             break
                     if task_index == -1: continue
 
-                    # Check Violations
-                    exe_delay = get_exe_delay(av_freq, t_service.weight)
+                    # ⭐ NEW: Multi-Core Aware Execution Delay
+                    tasks_on_server = max(1, server_loads[r_idx])
+                    if tasks_on_server <= c_cores:
+                        effective_freq_current = av_freq
+                    else:
+                        effective_freq_current = (c_cores * av_freq) / tasks_on_server
+                        
+                    exe_delay = get_exe_delay(effective_freq_current, t_service.weight)
                     path_delay = get_path_delay(r_bs_id, u_bs_id, t_service.data_size, self.data, graph)
                     total_delay = exe_delay + path_delay
                     
                     best_target = -1
                     
-                    # A. Deadline Miss?
                     if total_delay > t_service.deadline:
                         if path_delay > exe_delay:
-                            # Bottleneck is Network: Move to Local BS
-                            candidates = [s for s in range(self.num_resources) 
-                                          if self.servers[s].base_station.id == u_bs_id]
+                            candidates = [s for s in range(self.num_resources) if self.servers[s].base_station.id == u_bs_id]
                             if candidates:
-                                best_target = random.choice(candidates)
+                                best_target = min(candidates, key=lambda s: server_loads[s])
                             else:
-                                # Fallback: Best Freq
-                                best_target = max(range(self.num_resources), key=lambda s: self.server_freqs[s])
+                                best_target = min(range(self.num_resources), key=lambda s: server_loads[s])
                         else:
-                            # Bottleneck is CPU: FIX 3 (Energy-Aware Repair)
-                            # Instead of blindly picking MAX freq (Cloud), find "Good Enough" freq
                             candidates = []
                             for s in range(self.num_resources):
-                                # Estimate if this server is fast enough
-                                est_exe = get_exe_delay(self.server_freqs[s], t_service.weight)
-                                if est_exe < t_service.deadline * 0.8: # 20% safety margin
+                                est_cores = self.server_cores[s]
+                                est_load = server_loads[s] + 1
+                                
+                                # ⭐ NEW: Multi-Core Aware Checking for Alternatives
+                                if est_load <= est_cores:
+                                    est_effective_freq = self.server_freqs[s]
+                                else:
+                                    est_effective_freq = (est_cores * self.server_freqs[s]) / est_load
+                                    
+                                est_exe = get_exe_delay(est_effective_freq, t_service.weight)
+                                if est_exe < t_service.deadline * 0.9: 
                                     candidates.append(s)
                             
                             if candidates:
-                                # Pick the CHEAPEST/LOWEST POWER among valid candidates
-                                best_target = min(candidates, key=lambda s: self.server_costs[s])
+                                best_target = min(candidates, key=lambda s: (self.server_costs[s], server_loads[s]))
                             else:
-                                # Panic: No server is fast enough? Pick the absolute fastest.
-                                best_target = max(range(self.num_resources), key=lambda s: self.server_freqs[s])
+                                best_target = max(range(self.num_resources), key=lambda s: self.server_freqs[s] * self.server_cores[s] / (server_loads[s] + 1))
 
-                    # B. Cost Optimization (If Deadline OK)
                     else:
                         current_cost = self.server_costs[r_idx]
                         min_cost = min(self.server_costs)
-                        if current_cost > min_cost * 2.0 and t_service.weight < self.avg_task_weight:
-                             best_target = min(range(self.num_resources), key=lambda s: self.server_costs[s])
+                        if current_cost > min_cost * 1.5 and t_service.weight < self.avg_task_weight:
+                            cheapest_candidates = [s for s in range(self.num_resources) if self.server_costs[s] <= min_cost * 1.2]
+                            if cheapest_candidates:
+                                best_cheap = min(cheapest_candidates, key=lambda s: server_loads[s])
+                                # Only move to cheap node if its cores aren't completely overwhelmed
+                                if server_loads[best_cheap] < self.server_cores[best_cheap] * 2: 
+                                    best_target = best_cheap
 
-                    # Apply Repair
                     if best_target != -1 and best_target != r_idx:
                         start = task_index * self.num_resources
                         ind.CInd[start + r_idx] = 0
                         ind.CInd[start + best_target] = 1
+                        
+                        server_loads[r_idx] -= 1
+                        server_loads[best_target] += 1
+                        r_idx = best_target 
+
         return population
 
     def get_score(self, ind):
@@ -206,9 +218,19 @@ class SHybridQIGA:
         return sum(ind.fitness)
 
     def run(self):
-        q_ind = self._initialize_population()
+        self.all_tasks = get_all_tasks(self.data)
+        self.num_tasks = len(self.all_tasks)
         
-        # Seeding
+        if self.num_tasks == 0:
+            dummy = Individual()
+            dummy.CInd = []
+            pop = self.fitness([dummy], self.data)
+            return pop[0], pop
+
+        self.task_weights = [t['service'].weight for t in self.all_tasks]
+        self.avg_task_weight = sum(self.task_weights) / len(self.task_weights) if self.task_weights else 0
+
+        q_ind = self._initialize_population()
         seed_ind = self._generate_heuristic_seed()
         seeded_pop = self.fitness([seed_ind], self.data)
         best_overall = copy.deepcopy(seeded_pop[0])
@@ -217,13 +239,9 @@ class SHybridQIGA:
         
         for gen in range(self.generation_count):
             classical_pop = self._measure(q_ind)
-            
-            # --- HYBRID REPAIR ---
             classical_pop = self.repair_population(classical_pop) 
-            
             classical_pop = self.fitness(classical_pop, self.data)
             
-            # Dynamic Mutation
             unique_costs = len(set(ind.cost for ind in classical_pop))
             if unique_costs < 5: self.mutation_rate = 0.05 
             else: self.mutation_rate = self.base_mutation_rate

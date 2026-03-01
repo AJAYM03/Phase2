@@ -4,10 +4,11 @@ import os
 import time
 
 class SUMOInterface:
-    def __init__(self, sumo_config="sumo_sim/simulation.sumocfg", use_gui=False):
+    def __init__(self, sumo_config="sumo_sim/simulation.sumocfg", use_gui=False, bs_bounds=(1000, 1000)):
         self.sumo_config = sumo_config
         self.started = False
         self.use_gui = use_gui
+        self.bs_max_x, self.bs_max_y = bs_bounds  # Store the infrastructure bounds
 
         # 🚗 Vehicle → EdgeSimPy User mapping
         self.vehicle_to_user = {}
@@ -97,14 +98,13 @@ class SUMOInterface:
                 # Get vehicle position in SUMO world
                 x, y = traci.vehicle.getPosition(veh_id)
 
-                # Normalize to 0–1 range
+                # Normalize to 0–1 range (percentage across the map)
                 norm_x = (x - xmin) / (xmax - xmin)
                 norm_y = (y - ymin) / (ymax - ymin)
 
-                # Scale to dataset world (0–100 grid approx)
-                DATASET_SCALE = 5
-                scaled_x = norm_x * DATASET_SCALE
-                scaled_y = norm_y * DATASET_SCALE
+                # ⭐ THE FIX: Map perfectly over the Base Station grid
+                scaled_x = norm_x * self.bs_max_x
+                scaled_y = norm_y * self.bs_max_y
 
                 user.coordinates = (scaled_x, scaled_y)
 

@@ -45,8 +45,19 @@ class DE:
             c_ind.extend(gene)
         return c_ind
 
-    # --- Main Loop ---
     def run(self):
+        # 🔴 DYNAMIC SYNCHRONIZATION
+        self.all_tasks = get_all_tasks(self.data)
+        self.num_tasks = len(self.all_tasks)
+        self.gene_len = self.num_tasks * self.num_resources
+
+        # 🛑 ZERO-TASK TRAP
+        if self.num_tasks == 0:
+            dummy = Individual()
+            dummy.CInd = []
+            pop = self.fitness([dummy], self.data)
+            return pop[0], pop
+
         vectors = []
         population = []
         

@@ -3,10 +3,20 @@ from edge_sim_py import Application, Service
 
 # Task generation intervals (seconds)
 TASK_INTERVALS = {
+    "telemetry": 1,   # 🟢 NEW: Constant background pinging
     "collision": 3,
     "vision": 5,
     "navigation": 10,
     "analytics": 30
+}
+
+# Real-world probability of a vehicle triggering this task at its interval
+TASK_PROBABILITIES = {
+    "telemetry": 0.90,  # 90% chance (almost always pinging)
+    "collision": 0.40,  # 40% chance (event-driven)
+    "vision": 0.30,     # 30% chance (periodic camera frames)
+    "navigation": 0.20, # 20% chance (route recalculation)
+    "analytics": 0.05   # 5% chance (heavy predictive maintenance)
 }
 
 class VehicularTaskGenerator:
@@ -16,6 +26,7 @@ class VehicularTaskGenerator:
 
         # 📊 Per-window counters (for logs/dashboard)
         self.task_type_counts = {
+            "telemetry": 0,
             "collision": 0,
             "vision": 0,
             "navigation": 0,
@@ -25,6 +36,21 @@ class VehicularTaskGenerator:
     # ----------------------------------------------------
     # 🚨 TASK TEMPLATES
     # ----------------------------------------------------
+    def _create_telemetry_task(self, user):
+        app = Application()
+        app.id = f"telemetry_app_{self.task_counter}"
+
+        service = Service()
+        service.id = f"telemetry_service_{self.task_counter}"
+        service.cpu_demand = random.randint(5, 15)       # Very light compute
+        service.memory_demand = random.randint(8, 16)    # Tiny memory
+        service.weight = random.randint(1, 2) * 1e8      # Very light weight (10^8)
+        service.data_size = random.randint(1, 5)         # 1-5 MB
+        service.deadline = random.uniform(0.5, 2.0)      # Strict deadline
+
+        app.connect_to_service(service)
+        user._connect_to_application(app, delay_sla=service.deadline)
+
     def _create_collision_task(self, user):
         app = Application()
         app.id = f"collision_app_{self.task_counter}"
@@ -106,15 +132,19 @@ class VehicularTaskGenerator:
                 continue
 
             for user in users:
-
-                if random.random() > 0.3:
+                
+                # ⭐ Use specific probability for this task type
+                prob = TASK_PROBABILITIES[task_type]
+                if random.random() > prob:
                     continue
 
                 self.task_counter += 1
                 tasks_created += 1
                 self.task_type_counts[task_type] += 1
 
-                if task_type == "collision":
+                if task_type == "telemetry":
+                    self._create_telemetry_task(user)
+                elif task_type == "collision":
                     self._create_collision_task(user)
                 elif task_type == "vision":
                     self._create_vision_task(user)
@@ -123,7 +153,8 @@ class VehicularTaskGenerator:
                 elif task_type == "analytics":
                     self._create_analytics_task(user)
 
-        print(f"🧠 Tasks generated at t={current_time}s : {tasks_created} tasks from {len(users)} vehicles")
+        # Optional: Print detailed breakdown for debugging
+        # print(f"🧠 Tasks at t={current_time}s: Tel:{self.task_type_counts['telemetry']} Col:{self.task_type_counts['collision']} Vis:{self.task_type_counts['vision']} Nav:{self.task_type_counts['navigation']} Ana:{self.task_type_counts['analytics']}")
 
         return tasks_created
 

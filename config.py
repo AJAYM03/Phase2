@@ -8,8 +8,8 @@ K_POP_SIZE = 32
 K_GEN_SIZE = 60
 
 # --- OPTIMIZATION WEIGHTS ---
-W_ENERGY = 0.1
-W_LATENCY = 0.8
+W_ENERGY = 0.2
+W_LATENCY = 0.7
 W_COST = 0.1
 
 class Individual:
@@ -160,9 +160,6 @@ def fitness(population, data):
             for t_dict in sorted_tasks:
                 user = t_dict['user']; task = t_dict['service']
                 
-                # Calculations
-                # Note: random.uniform(0.9, 1.1) adds realistic jitter
-                #predicted_task_weight = task.weight * random.uniform(0.9, 1.1)
                 exe_delay = get_exe_delay(effective_frequency, task.weight)
                 path_delay = get_path_delay(resource.base_station.id, user.base_station.id, task.data_size, data, graph)
                 
@@ -178,10 +175,16 @@ def fitness(population, data):
 
                 if delay > task.deadline: individual.missed_deadlines += 1
 
-        # Averages
-        individual.energy = total_energy / total_tasks if total_tasks > 0 else float('inf')
+        # =========================================================
+        # ⭐ CRITICAL PHYSICS FIX: Totals vs Averages
+        # =========================================================
+        # Latency is a User QoS metric (Average is correct)
         individual.latency = total_latency / total_tasks if total_tasks > 0 else float('inf')
-        individual.cost = total_cost / total_tasks if total_tasks > 0 else float('inf')
+        
+        # Energy and Cost are System Overhead metrics (Absolute Totals are required)
+        individual.energy = total_energy if total_tasks > 0 else float('inf')
+        individual.cost = total_cost if total_tasks > 0 else float('inf')
+        # =========================================================
 
         energy_values.append(individual.energy)
         latency_values.append(individual.latency)
