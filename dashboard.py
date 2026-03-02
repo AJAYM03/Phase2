@@ -182,7 +182,7 @@ else:
             
             summary_df['SLA_Violation_Rate (%)'] = (summary_df['Total_Missed_Deadlines'] / summary_df['Total_Tasks']) * 100
             
-            # ⭐ NEW: Average Energy Per Task
+            # Average Energy Per Task
             summary_df['Avg_Energy_Per_Task (J)'] = summary_df['Total_Energy_Consumed'] / summary_df['Total_Tasks']
 
             sub_tabs = st.tabs(["📊 Standard Metrics & Time Series", "🕸️ Advanced Trade-off Analysis (Evaluator View)"])
@@ -193,20 +193,24 @@ else:
             with sub_tabs[0]:
                 st.markdown("### 🏆 Cumulative Performance Leaderboard")
                 
-                # Format the table for professional presentation (No green highlighting)
-                display_df = summary_df.copy()
-                display_df['SLA_Violation_Rate (%)'] = display_df['SLA_Violation_Rate (%)'].map("{:.2f}%".format)
-                display_df['Total_Energy_Consumed'] = display_df['Total_Energy_Consumed'].map("{:.1f} J".format)
-                display_df['Total_Financial_Cost'] = display_df['Total_Financial_Cost'].map("${:.2f}".format)
-                display_df['Average_Latency'] = display_df['Average_Latency'].map("{:.3f} s".format)
-                display_df['Avg_Energy_Per_Task (J)'] = display_df['Avg_Energy_Per_Task (J)'].map("{:.3f} J".format)
-                
                 # Arrange columns logically
-                display_df = display_df[['Algorithm', 'Total_Tasks', 'Total_Missed_Deadlines', 'SLA_Violation_Rate (%)', 'Average_Latency', 'Avg_Energy_Per_Task (J)', 'Total_Energy_Consumed', 'Total_Financial_Cost']]
+                cols = ['Algorithm', 'Total_Tasks', 'Total_Missed_Deadlines', 'SLA_Violation_Rate (%)', 'Average_Latency', 'Avg_Energy_Per_Task (J)', 'Total_Energy_Consumed', 'Total_Financial_Cost']
+                display_df = summary_df[cols].copy()
                 
-                st.dataframe(display_df)
+                # ⭐ CRITICAL FIX: Use Pandas .style.format() so the underlying data remains Floats for perfect numerical sorting!
+                styled_df = display_df.style.format({
+                    'Total_Tasks': "{:,.0f}",
+                    'Total_Missed_Deadlines': "{:,.0f}",
+                    'SLA_Violation_Rate (%)': "{:.2f}%",
+                    'Average_Latency': "{:.3f} s",
+                    'Avg_Energy_Per_Task (J)': "{:.3f} J",
+                    'Total_Energy_Consumed': "{:,.1f} J",  # Adding commas for big numbers!
+                    'Total_Financial_Cost': "${:,.2f}"
+                })
                 
-                # ⭐ NEW: CSV Download Button
+                st.dataframe(styled_df)
+                
+                # CSV Download Button
                 csv_export = summary_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Download Aggregated Results as CSV",
@@ -317,14 +321,14 @@ else:
                             name=row['Algorithm']
                         ))
                     
-                    # ⭐ NEW: Lock dragmode to prevent accidental zooming/panning on the radar chart
+                    # Lock dragmode to prevent accidental zooming/panning on the radar chart
                     fig_radar.update_layout(
                         polar=dict(radialaxis=dict(visible=False)), 
                         margin=dict(l=40, r=40, t=20, b=20),
                         dragmode=False
                     )
                     
-                    # ⭐ NEW: Hide the Plotly toolbar to keep it clean
+                    # Hide the Plotly toolbar to keep it clean
                     st.plotly_chart(fig_radar, config={'displayModeBar': False})
 
                 # --- PARETO SCATTER PLOT ---
