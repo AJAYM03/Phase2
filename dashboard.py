@@ -219,12 +219,19 @@ else:
 
                 st.markdown("### 📈 Real-Time Network Dynamics")
                 
-                # Plotly Chart: Traffic (Fixed Pan mode)
+                # Plotly Chart: Traffic (Fixed Pan mode - UNSTACKED)
                 load_df = filtered_df[filtered_df['Algorithm'] == filtered_df['Algorithm'].iloc[0]]
-                fig_load = px.area(load_df, x='time', y=['tasks_generated', 'active_vehicles'], 
+                fig_load = px.line(load_df, x='time', y=['tasks_generated', 'active_vehicles'], 
                                    title="🚦 Vehicular Traffic Injection (SUMO)", 
                                    color_discrete_sequence=["#FFA500", "#FF4B4B"])
-                fig_load.update_layout(dragmode='pan')
+                
+                # Fill the area to the x-axis, but turn off stacking!
+                fig_load.update_traces(fill='tozeroy') 
+                fig_load.update_layout(
+                    dragmode='pan',
+                    yaxis_title="Count (Tasks & Vehicles)",
+                    legend_title_text="Metric"
+                )
                 st.plotly_chart(fig_load)
                 
                 c1, c2 = st.columns(2)

@@ -5,6 +5,7 @@ class MOHEFT:
     """
     True MOHEFT (Multi-Objective HEFT)
     FULLY COMPATIBLE WITH DYNAMIC VEHICULAR RUNTIME
+    (Fixed with Multi-Core Load Awareness)
     """
 
     def __init__(self, fitness, population_size, generation_count, data):
@@ -16,8 +17,9 @@ class MOHEFT:
         self.servers.sort(key=lambda s: s.id)
         self.num_resources = len(self.servers)
 
-        # Precompute frequencies
+        # Precompute frequencies and cores
         self.server_freqs = [get_freq(s.model_name, s) for s in self.servers]
+        self.server_cores = [getattr(s, 'cpu', 1) for s in self.servers]
 
     # ==========================================================
     # MAIN ALGORITHM
@@ -52,7 +54,7 @@ class MOHEFT:
         ind = Individual()
         ind.CInd = [0] * (self.num_tasks * self.num_resources)
 
-        # Track memory usage per server
+        # Track memory usage and task load per server
         server_loads = {s.id: [] for s in self.servers}
 
         # ======================================================
@@ -68,13 +70,22 @@ class MOHEFT:
             # Evaluate all servers
             for s_idx, server in enumerate(self.servers):
 
-                # Memory check
                 current_load = server_loads[server.id]
+                
+                # Memory check
                 if memory_is_overloaded(current_load + [item], server.memory):
                     continue
 
-                freq = self.server_freqs[s_idx]
-                exe_delay = get_exe_delay(freq, task.weight)
+                # ⭐ CRITICAL FIX: Multi-Core Load-Aware CPU Estimation
+                c_cores = self.server_cores[s_idx]
+                future_task_count = len(current_load) + 1
+                
+                if future_task_count <= c_cores:
+                    effective_freq = self.server_freqs[s_idx]
+                else:
+                    effective_freq = (c_cores * self.server_freqs[s_idx]) / future_task_count
+
+                exe_delay = get_exe_delay(effective_freq, task.weight)
 
                 path_delay = get_path_delay(
                     server.base_station.id,
@@ -86,7 +97,7 @@ class MOHEFT:
 
                 total_delay = exe_delay + path_delay
 
-                # Energy model
+                # Energy model (using the accurate effective delay)
                 max_p = server.power_model_parameters.get("max_power_consumption", 0)
                 static_pct = server.power_model_parameters.get("static_power_percentage", 0) / 100.0
                 dynamic_power = max_p * (1 - static_pct)
@@ -163,6 +174,7 @@ class MOHEFT:
             start_bit = gene_idx * self.num_resources
             ind.CInd[start_bit + best_server_idx] = 1
 
+            # ⭐ Update load so the next task knows the server is busy!
             server_loads[best_server_obj.id].append(item)
 
         # ======================================================
